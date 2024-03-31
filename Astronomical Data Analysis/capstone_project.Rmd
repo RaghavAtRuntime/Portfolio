@@ -1,0 +1,228 @@
+---
+title: "Capstone project"
+author: "Peize Zhang, Raghav Sinha, Jiaxun Zhang, Yuhang Yang"
+date: "2023-04-11"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(rhdf5)
+library(boot)
+
+```
+### Research question 1:
+
+```{r view data}
+header <- h5ls("Galaxy10_DECals.h5")
+header
+```
+
+```{r read data}
+redshift = "Galaxy10_DECals.h5" %>% h5read("redshift") %>% as_tibble()
+galaxy_class = "Galaxy10_DECals.h5" %>% h5read("ans") %>% as.integer() %>% as.factor() %>% as_tibble()
+```
+
+```{r bind col, message = FALSE}
+galaxy_data = bind_cols(galaxy_class, redshift) %>% rename(galaxy_class = "value...1", redshift = "value...2")
+galaxy_data
+```
+
+```{r view distinct galaxy class}
+galaxy_data %>% distinct(galaxy_class)
+```
+
+```{r create analysis data}
+ana_data= galaxy_data %>% mutate(across(galaxy_class, as.character)) %>% filter(galaxy_class == "1" | galaxy_class == "2", !is.na(redshift))
+ana_data
+```
+```{r summary table}
+ana_data %>% summary()
+```
+
+```{r box_plot}
+box_plot_crop = ggplot(data = ana_data, aes(x = galaxy_class, y = redshift))
+box_plot_crop + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim = c(0, 0.25)) + labs(x = "Galaxy class", y = "Redshift value")
+```
+
+```{r bar_plot}
+ana_data %>% group_by(galaxy_class) %>% summarise(n = n(), mean = mean(redshift)) %>% ggplot() + geom_col(aes(x = galaxy_class, y = mean)) + labs(x = "Galaxy class", y = "Mean redshift") + NULL
+```
+
+**Below are my two sample hypothesis test**
+
+ null hypothesis: $H_0:\mu_{1}=\mu_{2}$
+ alternative hypothesis: $H_0:\mu_{1}\neq\mu_{2}$
+ $\mu_{1}$ is the mean redshift of class 1 galaxy while $\mu_{2}$ is the mean    redshift of class 2 galaxy.
+
+```{r test statistics}
+test_sta = ana_data %>% group_by(galaxy_class) %>% summarise(means = mean(redshift)) %>% summarise(diff(means)) %>% as.numeric()
+test_sta
+```
+
+```{r shuffling}
+repetition = 1000
+sim_dif = rep(NA, repetition)
+for(i in 1: repetition){
+  difference = ana_data %>% mutate(galaxy_class = sample(galaxy_class)) %>% group_by(galaxy_class) %>% summarise(means = mean(redshift)) %>% summarise(diff(means)) %>% as.numeric()
+  sim_dif[i] = difference
+}
+```
+
+```{r histogram (can't be shown in slides)}
+tibble(sim_dif) %>% ggplot(aes(x = sim_dif)) + geom_histogram(bins = 30, color = "black", fill = "grey")
+```
+
+```{r p_value}
+p_value = sum(sim_dif > test_sta)/repetition + sum(sim_dif < -1 * test_sta )/ repetition
+p_value
+```
+**Conclusion**
+
+> The p-value is about 0.512, which is much larger than the confidence level 0.05. Thus we don't have enough evidence to reject the null hypothesis. Therefore, we can say the mean redshift of class 1 and class 2 galaxies are generally the same.
+
+### Research question 2:
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, message = FALSE}
+library(tidyverse)
+install.packages("corrplot")
+library(corrplot)
+install.packages("arrow")
+library(arrow)
+library(MASS)
+```
+
+```{r}
+df <- read_parquet("nsa_v1_0_1_key_cols.parquet")
+glimpse(df)
+```
+
+```{r}
+df_numeric <- df %>% dplyr::select(-c("ra", "dec", "iauname"))
+df_numeric <- df_numeric %>% mutate(log_redshift = log10(redshift))
+
+df_numeric <- na.omit(df_numeric)
+df_numeric <- df_numeric[!is.infinite(rowSums(df_numeric)),]
+
+```
+```{r}
+corr <- cor(df_numeric)
+
+# Create a correlation matrix heatmap
+corrplot(corr, type = "upper", method = "color", 
+         tl.col = "black", tl.srt = 45, 
+         addCoef.col = "black", 
+         number.cex = 0.8, order = "hclust", title="Dataset Correlation Matrix Heatmap")
+```
+```{r}
+ggplot(df_numeric, aes(y=elpetro_absmag_r)) + geom_boxplot() + labs(title="Boxplot of the distribution of elpetro_absmag_r")
+```
+
+```{r}
+ggplot(df_numeric, aes(x=log_redshift, y=elpetro_absmag_r)) +
+  geom_point(color="blue", alpha=0.5, size=2) +
+  geom_smooth(method="lm", se=FALSE, color="red", size=1) +
+
+  # Set the title and axis labels
+  labs(title="Scatterplot of log_redshift vs elpetro_absmag_r",
+       x="log_redshift",
+       y="elpetro_absmag_r")
+
+```
+
+```{r}
+mod_redshift_mag <- lm(log_redshift ~ mag_r+elpetro_absmag_r, data = df_numeric)
+cat("sigma value for non-robust linear regression:", summary(mod_redshift_mag)$sigma, "\n")
+
+mod_redshift_mag_r <- rlm(log_redshift ~ mag_r+elpetro_absmag_r, data = df_numeric)
+cat("sigma value for robust linear regression:", summary(mod_redshift_mag_r)$sigma, "\n")
+```
+We see that the sigma value for the robust linear regression is lower than that of the non-robust linear regression model. This makes sense as we can observe quite a few outliers from the boxplots above. The robust linear regression is the better option.
+
+```{r}
+mod_redshift_mag <- lm(log_redshift ~ mag_r+elpetro_absmag_r, data = df_numeric)
+cat("NON-ROBUST LINEAR REGRESSION ANALYSIS \n")
+summary(mod_redshift_mag)
+
+mod_redshift_mag_r <- rlm(log_redshift ~ mag_r+elpetro_absmag_r, data = df_numeric)
+cat("ROBUST LINEAR REGRESSION ANALYSIS \n")
+summary(mod_redshift_mag_r)
+
+```
+The coefficients of the regression indicate that as the values of mag_r and elpetro_absmag_r increase, log_redshift also increases. The t-value and p-value associated with each coefficient are very large, indicating that they are statistically significant.
+
+The residual standard error is 0.02097, which is small, indicating a good fit between the model and the data. The smaller the residual standard error, the better the model fits the data.
+
+Additionally, the range of the residuals is from -2.95530 to 3.11860, which suggests that the model may not fit all of the data very well. There might be some outliers or influential observations in the dataset that are affecting the model's performance.
+
+Overall, the model seems to fit the data well with statistically significant coefficients, a small residual standard error, and the model appears to be robust to outliers compared to the traditional linear regression analysis.
+
+### Research question 3:
+
+```{r}
+library(boot)
+library(rhdf5)
+library(tidyverse)
+library(ggplot2)
+```
+
+
+```{r}
+header <- h5ls("Galaxy10_DECals.h5")
+header
+```
+
+```{r}
+redshift <- "Galaxy10_DECals.h5" %>% h5read("redshift") %>% as_tibble()
+galaxy_class <- "Galaxy10_DECals.h5" %>% h5read("ans") %>% as.integer() %>% as.factor() %>% as_tibble()
+galaxy_data = bind_cols(galaxy_class, redshift) %>% rename(galaxy_class = "value...1", redshift = "value...2")
+galaxy_data
+```
+
+```{r}
+ana_data = galaxy_data %>% mutate(across(galaxy_class, as.character)) %>% filter(galaxy_class == "4",!is.na(redshift))
+ana_data
+```
+
+```{r}
+ana_data %>% summary()
+```
+
+```{r}
+ana_data %>% ggplot() + geom_boxplot(aes(x = galaxy_class, y = redshift),na.rm = TRUE) + labs(x = "Cigar-Shaped Smooth Galaxies", y = "reshift value") + NULL
+```
+
+```{r}
+repetition <- 1000
+boot_mean <- rep(NA, repetition)
+set.seed(666)
+
+for (i in 1:repetition) {
+  boot_samp <- ana_data$redshift[sample(nrow(ana_data), size = 20, replace = TRUE)]
+  boot_mean[i] <- mean(boot_samp, na.rm = TRUE)
+}
+
+quantile(boot_mean, c(0.025, 0.975), na.rm = TRUE)
+
+```
+
+```{r}
+boot_means <- tibble(boot_mean = boot_mean)
+boot_means %>% ggplot(aes(x = boot_mean)) +
+  geom_histogram(colour = "black", fill = "grey") +
+  labs(x = "Bootstrap Sample Means of redshift") +
+  scale_colour_manual(values = "red", labels = "95% CI") +
+  geom_vline(xintercept = quantile(boot_means$boot_mean, c(0.025,0.975)), color = "red") +
+  theme_classic()
+
+```
+
