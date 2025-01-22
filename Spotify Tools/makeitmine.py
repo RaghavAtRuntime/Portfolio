@@ -9,8 +9,8 @@ def initialize_spotify_client():
     :return: Authenticated Spotify client instance.
     """
     scope = "user-library-read playlist-modify-public playlist-modify-private"
-    CLIENT_ID = "4c13582572d8436f98b4a71a48b0836d"
-    CLIENT_SECRET = "af80bfb5501845eeb864e3143d6ea82a"
+    CLIENT_ID = ""
+    CLIENT_SECRET = ""
     REDIRECT_URI = "http://localhost:8080/"
 
     return spotipy.Spotify(auth_manager=SpotifyOAuth(
